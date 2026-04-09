@@ -1,0 +1,7 @@
+../Core/Src/main.c:74:12:MLX90640_InitSensor	16	static
+../Core/Src/main.c:105:13:UART_SendString	16	static
+../Core/Src/main.c:110:13:UART_SendInt	56	static
+../Core/Src/main.c:147:13:MLX90640_PrintTemperature	56	static
+../Core/Src/main.c:197:5:main	16	static
+../Core/Src/main.c:281:6:SystemClock_Config	72	static
+../Core/Src/main.c:324:6:Error_Handler	4	static,ignoring_inline_asm

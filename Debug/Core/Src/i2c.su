@@ -1,0 +1,9 @@
+../Core/Src/i2c.c:25:12:MLX90640_HAL_StatusToError	16	static
+../Core/Src/i2c.c:45:6:MX_I2C1_Init	8	static
+../Core/Src/i2c.c:74:6:HAL_I2C_MspInit	40	static
+../Core/Src/i2c.c:102:6:HAL_I2C_MspDeInit	16	static
+../Core/Src/i2c.c:128:6:MLX90640_I2CInit	8	static
+../Core/Src/i2c.c:133:5:MLX90640_I2CGeneralReset	24	static
+../Core/Src/i2c.c:141:5:MLX90640_I2CRead	120	static
+../Core/Src/i2c.c:179:5:MLX90640_I2CWrite	40	static
+../Core/Src/i2c.c:199:6:MLX90640_I2CFreqSet	16	static
