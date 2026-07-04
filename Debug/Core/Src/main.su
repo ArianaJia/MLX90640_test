@@ -1,7 +1,8 @@
-../Core/Src/main.c:74:12:MLX90640_InitSensor	16	static
-../Core/Src/main.c:105:13:UART_SendString	16	static
-../Core/Src/main.c:110:13:UART_SendInt	56	static
-../Core/Src/main.c:147:13:MLX90640_PrintTemperature	56	static
-../Core/Src/main.c:197:5:main	16	static
-../Core/Src/main.c:281:6:SystemClock_Config	72	static
-../Core/Src/main.c:324:6:Error_Handler	4	static,ignoring_inline_asm
+../Core/Src/main.c:78:12:MLX90640_InitSensor	16	static
+../Core/Src/main.c:109:13:UART_SendString	24	static
+../Core/Src/main.c:129:6:HAL_UART_TxCpltCallback	16	static
+../Core/Src/main.c:137:13:UART_SendInt	56	static
+../Core/Src/main.c:174:17:UART_AppendTemperature	64	static
+../Core/Src/main.c:235:5:main	24	static
+../Core/Src/main.c:342:6:SystemClock_Config	72	static
+../Core/Src/main.c:385:6:Error_Handler	4	static,ignoring_inline_asm
