@@ -18,6 +18,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "dma.h"
 #include "i2c.h"
 #include "usart.h"
 #include "gpio.h"
@@ -37,6 +38,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define UART_LINE_BUFFER_SIZE 512U
 
 /* USER CODE END PD */
 
@@ -58,6 +60,8 @@ uint16_t col = 0;
 float ta = 0.0;
 float tr = 0.0;
 int status = 0;
+volatile uint8_t uartTxDone = 1;
+static char uartLineBuffer[UART_LINE_BUFFER_SIZE];
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -66,7 +70,7 @@ void SystemClock_Config(void);
 static int MLX90640_InitSensor(void);
 static void UART_SendString(const char *text);
 static void UART_SendInt(int value);
-static void MLX90640_PrintTemperature(float temperature);
+static uint16_t UART_AppendTemperature(char *buffer, uint16_t offset, uint16_t size, float temperature);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -104,7 +108,30 @@ static int MLX90640_InitSensor(void)
 
 static void UART_SendString(const char *text)
 {
-  HAL_UART_Transmit(&huart1, (uint8_t *)text, (uint16_t)strlen(text), HAL_MAX_DELAY);
+	uint16_t len = (uint16_t)strlen(text);
+
+	    while (!uartTxDone)
+	    {
+	    }
+
+	    uartTxDone = 0;
+	    if (HAL_UART_Transmit_DMA(&huart1, (uint8_t *)text, len) != HAL_OK)
+	    {
+	        uartTxDone = 1;
+	        return;
+	    }
+
+	    while (!uartTxDone)
+	    {
+	    }
+}
+
+void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
+{
+    if (huart->Instance == USART1)
+    {
+        uartTxDone = 1;
+    }
 }
 
 static void UART_SendInt(int value)
@@ -144,14 +171,19 @@ static void UART_SendInt(int value)
   UART_SendString(buffer);
 }
 
-static void MLX90640_PrintTemperature(float temperature)
+static uint16_t UART_AppendTemperature(char *buffer, uint16_t offset, uint16_t size, float temperature)
 {
   int32_t centiDegrees;
   int32_t absValue;
-  char buffer[16];
   uint32_t integerPart;
   uint32_t fractionPart;
+  char temp[16];
   uint32_t index = 0;
+
+  if (offset >= size)
+  {
+    return offset;
+  }
 
   if (temperature >= 0.0f)
   {
@@ -168,26 +200,32 @@ static void MLX90640_PrintTemperature(float temperature)
 
   if (centiDegrees < 0)
   {
-    buffer[index++] = '-';
+    temp[index++] = '-';
   }
 
   if (integerPart >= 100U)
   {
-    buffer[index++] = (char)('0' + (integerPart / 100U) % 10U);
+    temp[index++] = (char)('0' + (integerPart / 100U) % 10U);
   }
   if (integerPart >= 10U)
   {
-    buffer[index++] = (char)('0' + (integerPart / 10U) % 10U);
+    temp[index++] = (char)('0' + (integerPart / 10U) % 10U);
   }
-  buffer[index++] = (char)('0' + (integerPart % 10U));
-  buffer[index++] = '.';
-  buffer[index++] = (char)('0' + (fractionPart / 10U));
-  buffer[index++] = (char)('0' + (fractionPart % 10U));
-  buffer[index++] = ' ';
-  buffer[index] = '\0';
+  temp[index++] = (char)('0' + (integerPart % 10U));
+  temp[index++] = '.';
+  temp[index++] = (char)('0' + (fractionPart / 10U));
+  temp[index++] = (char)('0' + (fractionPart % 10U));
+  temp[index++] = ' ';
 
-  UART_SendString(buffer);
+  for (uint32_t copyIndex = 0; (copyIndex < index) && (offset < (size - 1U)); copyIndex++)
+  {
+    buffer[offset++] = temp[copyIndex];
+  }
+
+  buffer[offset] = '\0';
+  return offset;
 }
+
 /* USER CODE END 0 */
 
 /**
@@ -219,6 +257,7 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
   MX_I2C1_Init();
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
@@ -237,32 +276,54 @@ int main(void)
 //  while (1)
   for(;;)
   {
+    uint8_t subPageMask = 0U;
+    uint8_t frameAttempts = 0U;
 
 	HAL_GPIO_TogglePin(LED_GPIO_Port,LED_Pin);
-    status = MLX90640_GetFrameData(MLX90640_ADDR, frameData);
-    if (status < 0)
+    while ((subPageMask != 0x03U) && (frameAttempts < 4U))
     {
-      UART_SendString("Frame read error: ");
-      UART_SendInt(status);
-      UART_SendString("\r\n");
+      status = MLX90640_GetFrameData(MLX90640_ADDR, frameData);
+      if (status < 0)
+      {
+        UART_SendString("Frame read error: ");
+        UART_SendInt(status);
+        UART_SendString("\r\n");
+        break;
+      }
+
+      subPageMask |= (uint8_t)(1U << (frameData[833] & 1U));
+      ta = MLX90640_GetTa(frameData, &mlx90640);
+      tr = ta - MLX90640_TA_SHIFT;
+      MLX90640_CalculateTo(frameData, &mlx90640, MLX90640_EMISSIVITY, tr, tempMap);
+      frameAttempts++;
+    }
+
+    if ((status < 0) || (subPageMask != 0x03U))
+    {
       continue;
     }
 
-    ta = MLX90640_GetTa(frameData, &mlx90640);
-    tr = ta - MLX90640_TA_SHIFT;
-    MLX90640_CalculateTo(frameData, &mlx90640, MLX90640_EMISSIVITY, tr, tempMap);
     MLX90640_BadPixelsCorrection(mlx90640.brokenPixels, tempMap, 1, &mlx90640);
     MLX90640_BadPixelsCorrection(mlx90640.outlierPixels, tempMap, 1, &mlx90640);
 
     UART_SendString("----- Temperature Matrix -----\r\n");
     for (row = 0; row < 24; row++)
     {
+      uint16_t lineOffset = 0;
+
       for (col = 0; col < 32; col++)
       {
         i = (uint16_t)(row * 32U + col);
-        MLX90640_PrintTemperature(tempMap[i]);
+        lineOffset = UART_AppendTemperature(uartLineBuffer, lineOffset, UART_LINE_BUFFER_SIZE, tempMap[i]);
       }
-      UART_SendString("\r\n");
+
+      if (lineOffset < (UART_LINE_BUFFER_SIZE - 2U))
+      {
+        uartLineBuffer[lineOffset++] = '\r';
+        uartLineBuffer[lineOffset++] = '\n';
+      }
+      uartLineBuffer[lineOffset] = '\0';
+      UART_SendString(uartLineBuffer);
     }
     UART_SendString("----- Temperature Matrix End -----\r\n");
     HAL_Delay(125);
