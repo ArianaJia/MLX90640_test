@@ -62,12 +62,20 @@ float tr = 0.0;
 int status = 0;
 volatile uint8_t uartTxDone = 1;
 static char uartLineBuffer[UART_LINE_BUFFER_SIZE];
+static const uint8_t mlx90640Channels[MLX90640_SENSOR_NUM] = {
+  0x01U,
+  0x02U,
+  0x04U,
+  0x08U
+};
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
 static int MLX90640_InitSensor(void);
+static int MLX90640_InitSensorOnChannel(uint8_t sensorIndex);
+static int MLX90640_LoadParametersOnChannel(uint8_t sensorIndex);
 static void UART_SendString(const char *text);
 static void UART_SendInt(int value);
 static uint16_t UART_AppendTemperature(char *buffer, uint16_t offset, uint16_t size, float temperature);
@@ -77,15 +85,23 @@ static uint16_t UART_AppendTemperature(char *buffer, uint16_t offset, uint16_t s
 /* USER CODE BEGIN 0 */
 static int MLX90640_InitSensor(void)
 {
-  int status;
-
-  status = MLX90640_DumpEE(MLX90640_ADDR, eeData);
-  if (status != MLX90640_NO_ERROR)
+  for (uint8_t sensorIndex = 0U; sensorIndex < MLX90640_SENSOR_NUM; sensorIndex++)
   {
-    return status;
+    int status = MLX90640_InitSensorOnChannel(sensorIndex);
+    if (status != MLX90640_NO_ERROR)
+    {
+      return status;
+    }
   }
 
-  status = MLX90640_ExtractParameters(eeData, &mlx90640);
+  return MLX90640_NO_ERROR;
+}
+
+static int MLX90640_InitSensorOnChannel(uint8_t sensorIndex)
+{
+  int status;
+
+  status = MLX90640_LoadParametersOnChannel(sensorIndex);
   if (status != MLX90640_NO_ERROR)
   {
     return status;
@@ -104,6 +120,25 @@ static int MLX90640_InitSensor(void)
   }
 
   return MLX90640_NO_ERROR;
+}
+
+static int MLX90640_LoadParametersOnChannel(uint8_t sensorIndex)
+{
+  int status;
+
+  status = TCA9548A_SelectChannel(mlx90640Channels[sensorIndex]);
+  if (status != MLX90640_NO_ERROR)
+  {
+    return status;
+  }
+
+  status = MLX90640_DumpEE(MLX90640_ADDR, eeData);
+  if (status != MLX90640_NO_ERROR)
+  {
+    return status;
+  }
+
+  return MLX90640_ExtractParameters(eeData, &mlx90640);
 }
 
 static void UART_SendString(const char *text)
@@ -280,52 +315,71 @@ int main(void)
     uint8_t frameAttempts = 0U;
 
 	HAL_GPIO_TogglePin(LED_GPIO_Port,LED_Pin);
-    while ((subPageMask != 0x03U) && (frameAttempts < 4U))
+    for (uint8_t sensorIndex = 0U; sensorIndex < MLX90640_SENSOR_NUM; sensorIndex++)
     {
-      status = MLX90640_GetFrameData(MLX90640_ADDR, frameData);
-      if (status < 0)
+      subPageMask = 0U;
+      frameAttempts = 0U;
+
+      status = MLX90640_LoadParametersOnChannel(sensorIndex);
+      if (status != MLX90640_NO_ERROR)
       {
-        UART_SendString("Frame read error: ");
+        UART_SendString("MLX90640 parameter load error: ");
         UART_SendInt(status);
         UART_SendString("\r\n");
-        break;
+        continue;
       }
 
-      subPageMask |= (uint8_t)(1U << (frameData[833] & 1U));
-      ta = MLX90640_GetTa(frameData, &mlx90640);
-      tr = ta - MLX90640_TA_SHIFT;
-      MLX90640_CalculateTo(frameData, &mlx90640, MLX90640_EMISSIVITY, tr, tempMap);
-      frameAttempts++;
-    }
-
-    if ((status < 0) || (subPageMask != 0x03U))
-    {
-      continue;
-    }
-
-    MLX90640_BadPixelsCorrection(mlx90640.brokenPixels, tempMap, 1, &mlx90640);
-    MLX90640_BadPixelsCorrection(mlx90640.outlierPixels, tempMap, 1, &mlx90640);
-
-    UART_SendString("----- Temperature Matrix -----\r\n");
-    for (row = 0; row < 24; row++)
-    {
-      uint16_t lineOffset = 0;
-
-      for (col = 0; col < 32; col++)
+      while ((subPageMask != 0x03U) && (frameAttempts < 4U))
       {
-        i = (uint16_t)(row * 32U + col);
-        lineOffset = UART_AppendTemperature(uartLineBuffer, lineOffset, UART_LINE_BUFFER_SIZE, tempMap[i]);
+        status = MLX90640_GetFrameData(MLX90640_ADDR, frameData);
+        if (status < 0)
+        {
+          UART_SendString("Frame read error: ");
+          UART_SendInt(status);
+          UART_SendString("\r\n");
+          break;
+        }
+
+        subPageMask |= (uint8_t)(1U << (frameData[833] & 1U));
+        ta = MLX90640_GetTa(frameData, &mlx90640);
+        tr = ta - MLX90640_TA_SHIFT;
+        MLX90640_CalculateTo(frameData, &mlx90640, MLX90640_EMISSIVITY, tr, tempMap);
+        frameAttempts++;
       }
 
-      if (lineOffset < (UART_LINE_BUFFER_SIZE - 2U))
+      if ((status < 0) || (subPageMask != 0x03U))
       {
-        uartLineBuffer[lineOffset++] = '\r';
-        uartLineBuffer[lineOffset++] = '\n';
+        continue;
       }
-      uartLineBuffer[lineOffset] = '\0';
-      UART_SendString(uartLineBuffer);
+
+      MLX90640_BadPixelsCorrection(mlx90640.brokenPixels, tempMap, 1, &mlx90640);
+      MLX90640_BadPixelsCorrection(mlx90640.outlierPixels, tempMap, 1, &mlx90640);
+
+      UART_SendString("----- Sensor ");
+      UART_SendInt(sensorIndex);
+      UART_SendString(" Temperature Matrix -----\r\n");
+      for (row = 0; row < 24; row++)
+      {
+        uint16_t lineOffset = 0;
+
+        for (col = 0; col < 32; col++)
+        {
+          i = (uint16_t)(row * 32U + col);
+          lineOffset = UART_AppendTemperature(uartLineBuffer, lineOffset, UART_LINE_BUFFER_SIZE, tempMap[i]);
+        }
+
+        if (lineOffset < (UART_LINE_BUFFER_SIZE - 2U))
+        {
+          uartLineBuffer[lineOffset++] = '\r';
+          uartLineBuffer[lineOffset++] = '\n';
+        }
+        uartLineBuffer[lineOffset] = '\0';
+        UART_SendString(uartLineBuffer);
+      }
+      UART_SendString("----- Sensor ");
+      UART_SendInt(sensorIndex);
+      UART_SendString(" Temperature Matrix End -----\r\n");
     }
-    UART_SendString("----- Temperature Matrix End -----\r\n");
     HAL_Delay(125);
 
     /* USER CODE END WHILE */

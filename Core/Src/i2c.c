@@ -138,6 +138,12 @@ int MLX90640_I2CGeneralReset(void)
       HAL_I2C_Master_Transmit(&hi2c1, 0x00, &command, 1, MLX90640_I2C_TIMEOUT_MS));
 }
 
+int TCA9548A_SelectChannel(uint8_t channelMask)
+{
+  return MLX90640_HAL_StatusToError(
+      HAL_I2C_Master_Transmit(&hi2c1, TCA9548A_ADDR, &channelMask, 1, MLX90640_I2C_TIMEOUT_MS));
+}
+
 int MLX90640_I2CRead(uint8_t slaveAddr, uint16_t startAddress, uint16_t nMemAddressRead, uint16_t *data)
 {
   uint16_t wordsRemaining = nMemAddressRead;

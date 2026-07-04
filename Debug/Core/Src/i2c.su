@@ -4,6 +4,7 @@
 ../Core/Src/i2c.c:102:6:HAL_I2C_MspDeInit	16	static
 ../Core/Src/i2c.c:128:6:MLX90640_I2CInit	8	static
 ../Core/Src/i2c.c:133:5:MLX90640_I2CGeneralReset	24	static
-../Core/Src/i2c.c:141:5:MLX90640_I2CRead	120	static
-../Core/Src/i2c.c:179:5:MLX90640_I2CWrite	40	static
-../Core/Src/i2c.c:199:6:MLX90640_I2CFreqSet	16	static
+../Core/Src/i2c.c:141:5:TCA9548A_SelectChannel	24	static
+../Core/Src/i2c.c:147:5:MLX90640_I2CRead	120	static
+../Core/Src/i2c.c:185:5:MLX90640_I2CWrite	40	static
+../Core/Src/i2c.c:205:6:MLX90640_I2CFreqSet	16	static
