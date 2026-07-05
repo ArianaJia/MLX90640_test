@@ -43,7 +43,13 @@ void MX_I2C1_Init(void);
 
 /* USER CODE BEGIN Prototypes */
 extern I2C_HandleTypeDef hi2c1;
-int TCA9548A_SelectChannel(uint8_t channelMask);
+int TCA9548A_SelectChannel(uint8_t channel);
+int MLX90640_SelectSensor(uint8_t sensorIndex);
+uint8_t MLX90640_GetSensorChannel(uint8_t sensorIndex);
+HAL_StatusTypeDef TCA9548A_GetLastHalStatus(void);
+uint32_t TCA9548A_GetLastErrorCode(void);
+HAL_StatusTypeDef MLX90640_GetLastHalStatus(void);
+uint32_t MLX90640_GetLastErrorCode(void);
 /* USER CODE END Prototypes */
 
 #ifdef __cplusplus

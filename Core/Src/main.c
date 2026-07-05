@@ -62,12 +62,7 @@ float tr = 0.0;
 int status = 0;
 volatile uint8_t uartTxDone = 1;
 static char uartLineBuffer[UART_LINE_BUFFER_SIZE];
-static const uint8_t mlx90640Channels[MLX90640_SENSOR_NUM] = {
-  0x01U,
-  0x02U,
-  0x04U,
-  0x08U
-};
+static uint8_t mlx90640SensorReady[MLX90640_SENSOR_NUM];
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -78,6 +73,9 @@ static int MLX90640_InitSensorOnChannel(uint8_t sensorIndex);
 static int MLX90640_LoadParametersOnChannel(uint8_t sensorIndex);
 static void UART_SendString(const char *text);
 static void UART_SendInt(int value);
+static void UART_SendHexByte(uint8_t value);
+static void UART_SendHexWord(uint32_t value);
+static void UART_SendInitError(uint8_t sensorIndex, const char *step, int error);
 static uint16_t UART_AppendTemperature(char *buffer, uint16_t offset, uint16_t size, float temperature);
 /* USER CODE END PFP */
 
@@ -85,13 +83,29 @@ static uint16_t UART_AppendTemperature(char *buffer, uint16_t offset, uint16_t s
 /* USER CODE BEGIN 0 */
 static int MLX90640_InitSensor(void)
 {
+  uint8_t initializedCount = 0U;
+
   for (uint8_t sensorIndex = 0U; sensorIndex < MLX90640_SENSOR_NUM; sensorIndex++)
   {
     int status = MLX90640_InitSensorOnChannel(sensorIndex);
     if (status != MLX90640_NO_ERROR)
     {
-      return status;
+      mlx90640SensorReady[sensorIndex] = 0U;
+      continue;
     }
+
+    mlx90640SensorReady[sensorIndex] = 1U;
+    initializedCount++;
+    UART_SendString("MLX90640 init ok, sensor=");
+    UART_SendInt(sensorIndex);
+    UART_SendString(", channel=");
+    UART_SendHexByte(MLX90640_GetSensorChannel(sensorIndex));
+    UART_SendString("\r\n");
+  }
+
+  if (initializedCount == 0U)
+  {
+    return -MLX90640_I2C_WRITE_ERROR;
   }
 
   return MLX90640_NO_ERROR;
@@ -110,12 +124,14 @@ static int MLX90640_InitSensorOnChannel(uint8_t sensorIndex)
   status = MLX90640_SetChessMode(MLX90640_ADDR);
   if (status != MLX90640_NO_ERROR)
   {
+    UART_SendInitError(sensorIndex, "set chess mode", status);
     return status;
   }
 
   status = MLX90640_SetRefreshRate(MLX90640_ADDR, MLX90640_REF_8HZ);
   if (status != MLX90640_NO_ERROR)
   {
+    UART_SendInitError(sensorIndex, "set refresh rate", status);
     return status;
   }
 
@@ -126,7 +142,25 @@ static int MLX90640_LoadParametersOnChannel(uint8_t sensorIndex)
 {
   int status;
 
-  status = TCA9548A_SelectChannel(mlx90640Channels[sensorIndex]);
+  status = MLX90640_SelectSensor(sensorIndex);
+  if (status != MLX90640_NO_ERROR)
+  {
+    UART_SendInitError(sensorIndex, "select TCA9548A channel", status);
+    return status;
+  }
+
+  status = MLX90640_I2CProbe(MLX90640_ADDR);
+  UART_SendString("MLX90640 probe, sensor=");
+  UART_SendInt(sensorIndex);
+  UART_SendString(", channel=");
+  UART_SendHexByte(MLX90640_GetSensorChannel(sensorIndex));
+  UART_SendString(", status=");
+  UART_SendInt(status);
+  UART_SendString(", hal=");
+  UART_SendInt((int)MLX90640_GetLastHalStatus());
+  UART_SendString(", err=");
+  UART_SendHexWord(MLX90640_GetLastErrorCode());
+  UART_SendString("\r\n");
   if (status != MLX90640_NO_ERROR)
   {
     return status;
@@ -135,10 +169,17 @@ static int MLX90640_LoadParametersOnChannel(uint8_t sensorIndex)
   status = MLX90640_DumpEE(MLX90640_ADDR, eeData);
   if (status != MLX90640_NO_ERROR)
   {
+    UART_SendInitError(sensorIndex, "dump EEPROM", status);
     return status;
   }
 
-  return MLX90640_ExtractParameters(eeData, &mlx90640);
+  status = MLX90640_ExtractParameters(eeData, &mlx90640);
+  if (status != MLX90640_NO_ERROR)
+  {
+    UART_SendInitError(sensorIndex, "extract parameters", status);
+  }
+
+  return status;
 }
 
 static void UART_SendString(const char *text)
@@ -204,6 +245,54 @@ static void UART_SendInt(int value)
   }
 
   UART_SendString(buffer);
+}
+
+static void UART_SendHexByte(uint8_t value)
+{
+  static const char hexDigits[] = "0123456789ABCDEF";
+  char buffer[5];
+
+  buffer[0] = '0';
+  buffer[1] = 'x';
+  buffer[2] = hexDigits[(value >> 4) & 0x0FU];
+  buffer[3] = hexDigits[value & 0x0FU];
+  buffer[4] = '\0';
+
+  UART_SendString(buffer);
+}
+
+static void UART_SendHexWord(uint32_t value)
+{
+  static const char hexDigits[] = "0123456789ABCDEF";
+  char buffer[11];
+
+  buffer[0] = '0';
+  buffer[1] = 'x';
+  for (uint8_t index = 0U; index < 8U; index++)
+  {
+    uint8_t shift = (uint8_t)(28U - (index * 4U));
+    buffer[2U + index] = hexDigits[(value >> shift) & 0x0FU];
+  }
+  buffer[10] = '\0';
+
+  UART_SendString(buffer);
+}
+
+static void UART_SendInitError(uint8_t sensorIndex, const char *step, int error)
+{
+  UART_SendString("MLX90640 init error, sensor=");
+  UART_SendInt(sensorIndex);
+  UART_SendString(", channel=");
+  UART_SendHexByte(MLX90640_GetSensorChannel(sensorIndex));
+  UART_SendString(", step=");
+  UART_SendString(step);
+  UART_SendString(", status=");
+  UART_SendInt(error);
+  UART_SendString(", hal=");
+  UART_SendInt((int)TCA9548A_GetLastHalStatus());
+  UART_SendString(", err=");
+  UART_SendHexWord(TCA9548A_GetLastErrorCode());
+  UART_SendString("\r\n");
 }
 
 static uint16_t UART_AppendTemperature(char *buffer, uint16_t offset, uint16_t size, float temperature)
@@ -317,15 +406,18 @@ int main(void)
 	HAL_GPIO_TogglePin(LED_GPIO_Port,LED_Pin);
     for (uint8_t sensorIndex = 0U; sensorIndex < MLX90640_SENSOR_NUM; sensorIndex++)
     {
+      if (mlx90640SensorReady[sensorIndex] == 0U)
+      {
+        continue;
+      }
+
       subPageMask = 0U;
       frameAttempts = 0U;
 
       status = MLX90640_LoadParametersOnChannel(sensorIndex);
       if (status != MLX90640_NO_ERROR)
       {
-        UART_SendString("MLX90640 parameter load error: ");
-        UART_SendInt(status);
-        UART_SendString("\r\n");
+        mlx90640SensorReady[sensorIndex] = 0U;
         continue;
       }
 
