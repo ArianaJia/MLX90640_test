@@ -33,6 +33,13 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
+typedef struct
+{
+  uint16_t EeData[832];
+  uint16_t FrameData[834];
+  float TempMap[768];
+  paramsMLX90640 Params;
+} MLX90640_RuntimeData_t;
 
 /* USER CODE END PTD */
 
@@ -50,10 +57,7 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-uint16_t eeData[832];
-uint16_t frameData[834];
-float tempMap[768];
-paramsMLX90640 mlx90640;
+static MLX90640_RuntimeData_t mlx90640Runtime;
 uint16_t i = 0;
 uint16_t row = 0;
 uint16_t col = 0;
@@ -166,14 +170,14 @@ static int MLX90640_LoadParametersOnChannel(uint8_t sensorIndex)
     return status;
   }
 
-  status = MLX90640_DumpEE(MLX90640_ADDR, eeData);
+  status = MLX90640_DumpEE(MLX90640_ADDR, mlx90640Runtime.EeData);
   if (status != MLX90640_NO_ERROR)
   {
     UART_SendInitError(sensorIndex, "dump EEPROM", status);
     return status;
   }
 
-  status = MLX90640_ExtractParameters(eeData, &mlx90640);
+  status = MLX90640_ExtractParameters(mlx90640Runtime.EeData, &mlx90640Runtime.Params);
   if (status != MLX90640_NO_ERROR)
   {
     UART_SendInitError(sensorIndex, "extract parameters", status);
@@ -423,7 +427,7 @@ int main(void)
 
       while ((subPageMask != 0x03U) && (frameAttempts < 4U))
       {
-        status = MLX90640_GetFrameData(MLX90640_ADDR, frameData);
+        status = MLX90640_GetFrameData(MLX90640_ADDR, mlx90640Runtime.FrameData);
         if (status < 0)
         {
           UART_SendString("Frame read error: ");
@@ -432,10 +436,15 @@ int main(void)
           break;
         }
 
-        subPageMask |= (uint8_t)(1U << (frameData[833] & 1U));
-        ta = MLX90640_GetTa(frameData, &mlx90640);
+        subPageMask |= (uint8_t)(1U << (mlx90640Runtime.FrameData[833] & 1U));
+        ta = MLX90640_GetTa(mlx90640Runtime.FrameData, &mlx90640Runtime.Params);
         tr = ta - MLX90640_TA_SHIFT;
-        MLX90640_CalculateTo(frameData, &mlx90640, MLX90640_EMISSIVITY, tr, tempMap);
+        MLX90640_CalculateTo(
+            mlx90640Runtime.FrameData,
+            &mlx90640Runtime.Params,
+            MLX90640_EMISSIVITY,
+            tr,
+            mlx90640Runtime.TempMap);
         frameAttempts++;
       }
 
@@ -444,8 +453,16 @@ int main(void)
         continue;
       }
 
-      MLX90640_BadPixelsCorrection(mlx90640.brokenPixels, tempMap, 1, &mlx90640);
-      MLX90640_BadPixelsCorrection(mlx90640.outlierPixels, tempMap, 1, &mlx90640);
+      MLX90640_BadPixelsCorrection(
+          mlx90640Runtime.Params.brokenPixels,
+          mlx90640Runtime.TempMap,
+          1,
+          &mlx90640Runtime.Params);
+      MLX90640_BadPixelsCorrection(
+          mlx90640Runtime.Params.outlierPixels,
+          mlx90640Runtime.TempMap,
+          1,
+          &mlx90640Runtime.Params);
 
       UART_SendString("----- Sensor ");
       UART_SendInt(sensorIndex);
@@ -457,7 +474,11 @@ int main(void)
         for (col = 0; col < 32; col++)
         {
           i = (uint16_t)(row * 32U + col);
-          lineOffset = UART_AppendTemperature(uartLineBuffer, lineOffset, UART_LINE_BUFFER_SIZE, tempMap[i]);
+          lineOffset = UART_AppendTemperature(
+              uartLineBuffer,
+              lineOffset,
+              UART_LINE_BUFFER_SIZE,
+              mlx90640Runtime.TempMap[i]);
         }
 
         if (lineOffset < (UART_LINE_BUFFER_SIZE - 2U))
