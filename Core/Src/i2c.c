@@ -25,6 +25,8 @@ static HAL_StatusTypeDef tca9548aLastHalStatus = HAL_OK;
 static uint32_t tca9548aLastErrorCode = HAL_I2C_ERROR_NONE;
 static HAL_StatusTypeDef mlx90640LastHalStatus = HAL_OK;
 static uint32_t mlx90640LastErrorCode = HAL_I2C_ERROR_NONE;
+static volatile uint8_t mlx90640I2cRxDone = 0U;
+static volatile uint8_t mlx90640I2cError = 0U;
 static uint8_t i2c1StartupRecoveryDone = 0U;
 static uint8_t tca9548aConsecutiveBusyCount = 0U;
 static const uint8_t mlx90640SensorChannels[MLX90640_SENSOR_NUM] = {
@@ -82,6 +84,38 @@ static HAL_StatusTypeDef TCA9548A_WriteChannelMask(uint8_t channelMask)
   return tca9548aLastHalStatus;
 }
 
+static HAL_StatusTypeDef MLX90640_I2CWaitForDmaRx(uint32_t tickstart)
+{
+  while ((mlx90640I2cRxDone == 0U) && (mlx90640I2cError == 0U))
+  {
+    if ((HAL_GetTick() - tickstart) > MLX90640_I2C_DMA_TIMEOUT_MS)
+    {
+      mlx90640LastHalStatus = HAL_TIMEOUT;
+      mlx90640LastErrorCode = hi2c1.ErrorCode | HAL_I2C_ERROR_TIMEOUT;
+
+      if (hi2c1.hdmarx != NULL)
+      {
+        (void)HAL_DMA_Abort(hi2c1.hdmarx);
+      }
+
+      (void)HAL_I2C_DeInit(&hi2c1);
+      (void)HAL_I2C_Init(&hi2c1);
+      return HAL_TIMEOUT;
+    }
+  }
+
+  if (mlx90640I2cError != 0U)
+  {
+    mlx90640LastHalStatus = HAL_ERROR;
+    mlx90640LastErrorCode = hi2c1.ErrorCode;
+    return HAL_ERROR;
+  }
+
+  mlx90640LastHalStatus = HAL_OK;
+  mlx90640LastErrorCode = hi2c1.ErrorCode;
+  return HAL_OK;
+}
+
 static int MLX90640_HAL_StatusToError(HAL_StatusTypeDef status)
 {
   if (status == HAL_OK)
@@ -100,6 +134,7 @@ static int MLX90640_HAL_StatusToError(HAL_StatusTypeDef status)
 /* USER CODE END 0 */
 
 I2C_HandleTypeDef hi2c1;
+DMA_HandleTypeDef hdma_i2c1_rx;
 
 /* I2C1 init function */
 void MX_I2C1_Init(void)
@@ -153,6 +188,24 @@ void HAL_I2C_MspInit(I2C_HandleTypeDef* i2cHandle)
 
     /* I2C1 clock enable */
     __HAL_RCC_I2C1_CLK_ENABLE();
+
+    /* I2C1 DMA Init */
+    /* I2C1_RX Init */
+    hdma_i2c1_rx.Instance = DMA1_Channel7;
+    hdma_i2c1_rx.Init.Direction = DMA_PERIPH_TO_MEMORY;
+    hdma_i2c1_rx.Init.PeriphInc = DMA_PINC_DISABLE;
+    hdma_i2c1_rx.Init.MemInc = DMA_MINC_ENABLE;
+    hdma_i2c1_rx.Init.PeriphDataAlignment = DMA_PDATAALIGN_BYTE;
+    hdma_i2c1_rx.Init.MemDataAlignment = DMA_MDATAALIGN_BYTE;
+    hdma_i2c1_rx.Init.Mode = DMA_NORMAL;
+    hdma_i2c1_rx.Init.Priority = DMA_PRIORITY_LOW;
+    if (HAL_DMA_Init(&hdma_i2c1_rx) != HAL_OK)
+    {
+      Error_Handler();
+    }
+
+    __HAL_LINKDMA(i2cHandle,hdmarx,hdma_i2c1_rx);
+
   /* USER CODE BEGIN I2C1_MspInit 1 */
 
   /* USER CODE END I2C1_MspInit 1 */
@@ -178,6 +231,8 @@ void HAL_I2C_MspDeInit(I2C_HandleTypeDef* i2cHandle)
 
     HAL_GPIO_DeInit(GPIOB, GPIO_PIN_7);
 
+    /* I2C1 DMA DeInit */
+    HAL_DMA_DeInit(i2cHandle->hdmarx);
   /* USER CODE BEGIN I2C1_MspDeInit 1 */
 
   /* USER CODE END I2C1_MspDeInit 1 */
@@ -303,17 +358,25 @@ int MLX90640_I2CRead(uint8_t slaveAddr, uint16_t startAddress, uint16_t nMemAddr
   {
     uint16_t wordsToRead = (wordsRemaining > MLX90640_I2C_READ_CHUNK_WORDS) ?
         MLX90640_I2C_READ_CHUNK_WORDS : wordsRemaining;
-    HAL_StatusTypeDef status = HAL_I2C_Mem_Read(
+    mlx90640I2cRxDone = 0U;
+    mlx90640I2cError = 0U;
+
+    HAL_StatusTypeDef status = HAL_I2C_Mem_Read_DMA(
         &hi2c1,
         slaveAddr,
         currentAddress,
         I2C_MEMADD_SIZE_16BIT,
         rawBuffer,
-        (uint16_t)(wordsToRead * 2U),
-        MLX90640_I2C_TIMEOUT_MS);
+        (uint16_t)(wordsToRead * 2U));
     mlx90640LastHalStatus = status;
     mlx90640LastErrorCode = hi2c1.ErrorCode;
 
+    if (status != HAL_OK)
+    {
+      return MLX90640_HAL_StatusToError(status);
+    }
+
+    status = MLX90640_I2CWaitForDmaRx(HAL_GetTick());
     if (status != HAL_OK)
     {
       return MLX90640_HAL_StatusToError(status);
@@ -330,6 +393,27 @@ int MLX90640_I2CRead(uint8_t slaveAddr, uint16_t startAddress, uint16_t nMemAddr
   }
 
   return 0;
+}
+
+void HAL_I2C_MemRxCpltCallback(I2C_HandleTypeDef *hi2c)
+{
+  if (hi2c->Instance == I2C1)
+  {
+    mlx90640I2cRxDone = 1U;
+    mlx90640I2cError = 0U;
+    mlx90640LastHalStatus = HAL_OK;
+    mlx90640LastErrorCode = hi2c->ErrorCode;
+  }
+}
+
+void HAL_I2C_ErrorCallback(I2C_HandleTypeDef *hi2c)
+{
+  if (hi2c->Instance == I2C1)
+  {
+    mlx90640I2cError = 1U;
+    mlx90640LastHalStatus = HAL_ERROR;
+    mlx90640LastErrorCode = hi2c->ErrorCode;
+  }
 }
 
 int MLX90640_I2CProbe(uint8_t slaveAddr)

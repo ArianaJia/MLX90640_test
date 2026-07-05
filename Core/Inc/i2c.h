@@ -37,6 +37,7 @@ extern I2C_HandleTypeDef hi2c1;
 /* USER CODE BEGIN Private defines */
 #define MLX90640_I2C_TIMEOUT_MS 100
 #define MLX90640_I2C_READ_CHUNK_WORDS 32
+#define MLX90640_I2C_DMA_TIMEOUT_MS 100
 /* USER CODE END Private defines */
 
 void MX_I2C1_Init(void);
