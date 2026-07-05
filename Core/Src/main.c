@@ -75,6 +75,7 @@ void SystemClock_Config(void);
 static int MLX90640_InitSensor(void);
 static int MLX90640_InitSensorOnChannel(uint8_t sensorIndex);
 static int MLX90640_LoadParametersOnChannel(uint8_t sensorIndex);
+static int MLX90640_SetRefreshRateLocal(uint8_t slaveAddr, uint8_t refreshRate);
 static void UART_SendString(const char *text);
 static void UART_SendInt(int value);
 static void UART_SendHexByte(uint8_t value);
@@ -132,7 +133,7 @@ static int MLX90640_InitSensorOnChannel(uint8_t sensorIndex)
     return status;
   }
 
-  status = MLX90640_SetRefreshRate(MLX90640_ADDR, MLX90640_REF_8HZ);
+  status = MLX90640_SetRefreshRateLocal(MLX90640_ADDR, MLX90640_REF_1HZ);
   if (status != MLX90640_NO_ERROR)
   {
     UART_SendInitError(sensorIndex, "set refresh rate", status);
@@ -140,6 +141,25 @@ static int MLX90640_InitSensorOnChannel(uint8_t sensorIndex)
   }
 
   return MLX90640_NO_ERROR;
+}
+
+static int MLX90640_SetRefreshRateLocal(uint8_t slaveAddr, uint8_t refreshRate)
+{
+  uint16_t controlRegister1;
+  uint16_t value;
+  int status;
+
+  status = MLX90640_I2CRead(slaveAddr, MLX90640_CTRL_REG, 1, &controlRegister1);
+  if (status != MLX90640_NO_ERROR)
+  {
+    return status;
+  }
+
+  value = ((uint16_t)refreshRate << MLX90640_CTRL_REFRESH_SHIFT);
+  value &= MLX90640_CTRL_REFRESH_MASK;
+  controlRegister1 = (controlRegister1 & ~MLX90640_CTRL_REFRESH_MASK) | value;
+
+  return MLX90640_I2CWrite(slaveAddr, MLX90640_CTRL_REG, controlRegister1);
 }
 
 static int MLX90640_LoadParametersOnChannel(uint8_t sensorIndex)

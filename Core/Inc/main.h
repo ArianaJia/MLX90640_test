@@ -66,7 +66,7 @@ void Error_Handler(void);
 #define MLX90640_SENSOR_NUM 4U
 #define MLX90640_EMISSIVITY 0.95f
 #define MLX90640_TA_SHIFT   8.0f
-#define MLX90640_REF_8HZ    0x04
+#define MLX90640_REF_1HZ    0x01
 /* USER CODE END Private defines */
 
 #ifdef __cplusplus
